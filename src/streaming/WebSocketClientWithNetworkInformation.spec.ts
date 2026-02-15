@@ -83,6 +83,7 @@ let client: WebSocketClient;
 let connection: MockNetworkInformation;
 
 beforeEach(() => {
+  jest.clearAllMocks();
   connection = new MockNetworkInformation();
 
   let WebSocketClientWithNetworkInformation: typeof ActualWebSocketClientWithNetworkInformation;
@@ -114,25 +115,25 @@ describe('initially online', () => {
     connection.type = 'wifi';
   });
 
-  test('should not call super.connect()', () => expect(client['__test__connect']).toBeCalledTimes(0));
+  test('should not call super.connect()', () => expect(client['__test__connect']).toHaveBeenCalledTimes(0));
 
   describe('when connect() is called', () => {
     beforeEach(() => client.connect());
 
-    test('should call super.connect()', () => expect(client['__test__connect']).toBeCalledTimes(1));
-    test('should not call super.disconnect()', () => expect(client['__test__disconnect']).toBeCalledTimes(0));
+    test('should call super.connect()', () => expect(client['__test__connect']).toHaveBeenCalledTimes(1));
+    test('should not call super.disconnect()', () => expect(client['__test__disconnect']).toHaveBeenCalledTimes(0));
     test('should not call disconnectionHandler', () =>
-      expect(client['__test__disconnectionHandler']).toBeCalledTimes(0));
+      expect(client['__test__disconnectionHandler']).toHaveBeenCalledTimes(0));
 
     describe('when offline', () => {
       beforeEach(() => {
         connection.type = 'none';
       });
 
-      test('should call super.disconnect()', () => expect(client['__test__disconnect']).toBeCalledTimes(1));
+      test('should call super.disconnect()', () => expect(client['__test__disconnect']).toHaveBeenCalledTimes(1));
 
       // If connected, it should call disconnectionHandler.
-      test('should call disconnectionHandler', () => expect(client['__test__disconnectionHandler']).toBeCalledTimes(1));
+      test('should call disconnectionHandler', () => expect(client['__test__disconnectionHandler']).toHaveBeenCalledTimes(1));
 
       describe('when connect() is called after disconnect', () => {
         let promise;
@@ -156,8 +157,8 @@ describe('initially online', () => {
         connection.type = 'bluetooth';
       });
 
-      test('should call super.disconnect()', () => expect(client['__test__disconnect']).toBeCalledTimes(1));
-      test('should call disconnectionHandler', () => expect(client['__test__disconnectionHandler']).toBeCalledTimes(1));
+      test('should call super.disconnect()', () => expect(client['__test__disconnect']).toHaveBeenCalledTimes(1));
+      test('should call disconnectionHandler', () => expect(client['__test__disconnectionHandler']).toHaveBeenCalledTimes(1));
     });
 
     describe('when connect() is called twice', () => {
@@ -192,8 +193,8 @@ describe('initially offline', () => {
     test('should throw', () => expect(() => promise).rejects.toThrow());
 
     // If never connected, it did not need to call disconnectionHandler.
-    test('should not call super.disconnect()', () => expect(client['__test__disconnect']).toBeCalledTimes(0));
+    test('should not call super.disconnect()', () => expect(client['__test__disconnect']).toHaveBeenCalledTimes(0));
     test('should not call disconnectionHandler', () =>
-      expect(client['__test__disconnectionHandler']).toBeCalledTimes(0));
+      expect(client['__test__disconnectionHandler']).toHaveBeenCalledTimes(0));
   });
 });

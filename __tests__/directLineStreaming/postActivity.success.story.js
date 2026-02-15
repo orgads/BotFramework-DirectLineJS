@@ -1,5 +1,3 @@
-import fetch from 'node-fetch';
-
 import { ConnectionStatus } from '../../src/directLine';
 import { DirectLineStreaming } from '../../src/directLineStreaming';
 import activityTimestampComparer from './__setup__/activityTimestampComparer';
@@ -12,8 +10,6 @@ const TOKEN_URL = 'https://hawo-mockbot4-token-app.ambitiousflower-67725bfd.west
 afterEach(() => jest.useRealTimers());
 
 test('should send activity', async () => {
-  jest.useFakeTimers({ now: 0 });
-
   const { domain, token } = await fetch(TOKEN_URL, { method: 'POST' }).then(res => res.json());
 
   const { directLineStreamingURL } = await setupBotProxy({ streamingBotURL: new URL('/', domain).href });

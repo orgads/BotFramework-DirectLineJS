@@ -6,7 +6,6 @@ import { Observable } from 'rxjs/Observable';
 import { Subscriber } from 'rxjs/Subscriber';
 import * as BFSE from 'botframework-streaming';
 import createDeferred from './createDeferred';
-import fetch from 'cross-fetch';
 
 import { Activity, ConnectionStatus, Conversation, DirectLine, IBotConnection, Media, Message } from './directLine';
 import WebSocketClientWithNetworkInformation from './streaming/WebSocketClientWithNetworkInformation';
@@ -52,6 +51,10 @@ class StreamHandler implements BFSE.RequestHandler {
   async processRequest(request: BFSE.IReceiveRequest, logger?: any): Promise<BFSE.StreamingResponse> {
     const streams = [...request.streams];
     const stream0 = streams.shift();
+    if (!stream0) {
+      this.subscriber.error(new Error('missing activity stream'));
+      return BFSE.StreamingResponse.create(500);
+    }
     const activitySetJson = await stream0.readAsString();
     const activitySet = JSON.parse(activitySetJson);
 
@@ -66,8 +69,11 @@ class StreamHandler implements BFSE.RequestHandler {
     if (streams.length > 0) {
       const attachments = [...activity.attachments];
 
-      let stream: BFSE.ContentStream;
-      while ((stream = streams.shift())) {
+      while (streams.length) {
+        const stream = streams.shift();
+        if (!stream) {
+          break;
+        }
         const attachment = await stream.readAsString();
         const dataUri = 'data:text/plain;base64,' + attachment;
         attachments.push({ contentType: stream.contentType, contentUrl: dataUri });
@@ -99,15 +105,15 @@ export class DirectLineStreaming implements IBotConnection {
   public connectionStatus$ = new BehaviorSubject(ConnectionStatus.Uninitialized);
   public activity$: Observable<Activity>;
 
-  private activitySubscriber: Subscriber<Activity>;
-  private connectDeferred: Deferred<void>;
-  private theStreamHandler: StreamHandler;
+  private activitySubscriber?: Subscriber<Activity>;
+  private connectDeferred: Deferred<void> = createDeferred();
+  private theStreamHandler!: StreamHandler;
 
   private domain: string;
 
-  private conversationId: string;
+  private conversationId = '';
   private token: string;
-  private streamConnection: BFSE.WebSocketClient;
+  private streamConnection?: BFSE.WebSocketClient;
   private queueActivities: boolean;
 
   private _botAgent = '';
@@ -174,12 +180,12 @@ export class DirectLineStreaming implements IBotConnection {
     // Once end() is called, no reconnection can be made.
     this._endAbortController.abort();
 
-    this.activitySubscriber.complete();
+    this.activitySubscriber?.complete();
 
     this.connectionStatus$.next(ConnectionStatus.Ended);
     this.connectionStatus$.complete();
 
-    this.streamConnection.disconnect();
+    this.streamConnection?.disconnect();
   }
 
   private commonHeaders() {
@@ -224,7 +230,7 @@ export class DirectLineStreaming implements IBotConnection {
         } else {
           if (res.status === 403 || res.status === 403) {
             console.error(`Fatal error while refreshing the token: ${res.status} ${res.statusText}`);
-            this.streamConnection.disconnect();
+            this.streamConnection?.disconnect();
             return;
           } else {
             console.warn(`Refresh attempt #${numberOfAttempts} failed: ${res.status} ${res.statusText}`);
@@ -236,10 +242,14 @@ export class DirectLineStreaming implements IBotConnection {
     }
 
     console.error('Retries exhausted');
-    this.streamConnection.disconnect();
+    this.streamConnection?.disconnect();
   }
 
   private sleep(ms: number): Promise<void> {
+    if (this._endAbortController.signal.aborted) {
+      return Promise.resolve();
+    }
+
     return new Promise(resolve => {
       const timer = setTimeout(resolve, ms);
       this._endAbortController.signal.addEventListener('abort', () => {
@@ -261,7 +271,7 @@ export class DirectLineStreaming implements IBotConnection {
       return this.postMessageWithAttachments(activity);
     }
 
-    const resp$ = Observable.create(async subscriber => {
+    const resp$ = Observable.create(async (subscriber: Subscriber<string>) => {
       const request = BFSE.StreamingRequest.create(
         'POST',
         '/v3/directline/conversations/' + this.conversationId + '/activities'
@@ -269,7 +279,7 @@ export class DirectLineStreaming implements IBotConnection {
       request.setBody(JSON.stringify(activity));
 
       try {
-        const resp = await this.streamConnection.send(request);
+        const resp = await this.streamConnection!.send(request);
         if (resp.statusCode !== 200) throw new Error('PostActivity returned ' + resp.statusCode);
         const numberOfStreams = resp.streams.length;
         if (numberOfStreams !== 1) throw new Error('Expected one stream but got ' + numberOfStreams);
@@ -282,7 +292,7 @@ export class DirectLineStreaming implements IBotConnection {
         // the disconnectionHandler. Everything else can
         // be retried
         console.warn(e);
-        this.streamConnection.disconnect();
+        this.streamConnection?.disconnect();
         return subscriber.error(e);
       }
     });
@@ -290,10 +300,11 @@ export class DirectLineStreaming implements IBotConnection {
   }
 
   private postMessageWithAttachments(message: Message) {
-    const { attachments, ...messageWithoutAttachments } = message;
+    const attachments = message.attachments ?? [];
+    const { ...messageWithoutAttachments } = message;
 
-    return Observable.create(subscriber => {
-      const httpContentList = [];
+    return Observable.create((subscriber: Subscriber<string>) => {
+      const httpContentList: BFSE.HttpContent[] = [];
       (async () => {
         try {
           const arrayBuffers = await Promise.all(
@@ -328,7 +339,7 @@ export class DirectLineStreaming implements IBotConnection {
           );
           httpContentList.forEach(e => request.addStream(e));
 
-          const resp = await this.streamConnection.send(request);
+          const resp = await this.streamConnection!.send(request);
           if (resp.streams && resp.streams.length !== 1) {
             subscriber.error(new Error(`Invalid stream count ${resp.streams.length}`));
           } else {
@@ -367,16 +378,20 @@ export class DirectLineStreaming implements IBotConnection {
   }
 
   private async connectAsync() {
+    if (this._endAbortController.signal.aborted) {
+      throw new Error('Connection has ended.');
+    }
+
     const re = new RegExp('^http(s?)');
 
     if (!re.test(this.domain)) {
       throw 'Domain must begin with http or https';
     }
 
-    const params = { token: this.token };
+    const params: Record<string, string> = { token: this.token };
 
     if (this.conversationId) {
-      params['conversationId'] = this.conversationId;
+      params.conversationId = this.conversationId;
     }
 
     const abortController = new AbortController();
@@ -386,6 +401,10 @@ export class DirectLineStreaming implements IBotConnection {
     // This promise will resolve when it is disconnected.
     return new Promise(async (resolve, reject) => {
       try {
+        if (this._endAbortController.signal.aborted) {
+          return reject(new Error('Connection has ended.'));
+        }
+
         this.streamConnection = new WebSocketClientWithNetworkInformation({
           disconnectionHandler: resolve,
           networkInformation: this.#networkInformation,
@@ -452,12 +471,19 @@ export class DirectLineStreaming implements IBotConnection {
       while (numRetries > 0) {
         numRetries--;
 
+        if (this._endAbortController.signal.aborted) {
+          return;
+        }
+
         const start = Date.now();
 
         try {
           // This promise will reject/resolve when disconnected.
           await this.connectAsync();
         } catch (err) {
+          if (this._endAbortController.signal.aborted) {
+            return;
+          }
           console.error(err);
         }
 
@@ -481,6 +507,10 @@ export class DirectLineStreaming implements IBotConnection {
         } else if (numRetries > 0) {
           // Sleep only if we are doing retry. Otherwise, we are going to break the loop and signal FailedToConnect.
           await this.sleep(this.getRetryDelay());
+
+          if (this._endAbortController.signal.aborted) {
+            return;
+          }
         }
       }
 

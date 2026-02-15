@@ -1,11 +1,18 @@
 /** @jest-environment ./__tests__/setup/jsdomEnvironmentWithProxy */
 
 import 'dotenv/config';
-import 'global-agent/bootstrap';
+
+try {
+  require('global-agent/bootstrap');
+} catch (error) {
+  if (process.env.GLOBAL_AGENT_HTTP_PROXY) {
+    console.warn('global-agent bootstrap unavailable; proxy support disabled for tests.');
+  }
+}
 
 import { EventTarget, getEventAttributeValue, setEventAttributeValue } from 'event-target-shim';
 import nock from 'nock';
-import onErrorResumeNext from 'on-error-resume-next';
+import { onErrorResumeNext } from 'on-error-resume-next';
 
 import { DirectLine } from '../src/directLine';
 

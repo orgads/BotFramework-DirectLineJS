@@ -44,7 +44,7 @@ export const mockServer = (scheduler: TestScheduler): Server => ({
 });
 
 const tokenResponse = (server: Server, request: AjaxRequest): AjaxResponse | null => {
-  const { headers } = request;
+  const headers = (request.headers || {}) as Record<string, string>;
   const authorization = headers['Authorization'];
   if (authorization === `Bearer ${server.conversation.token}`) {
     return null;
@@ -58,7 +58,7 @@ const tokenResponse = (server: Server, request: AjaxRequest): AjaxResponse | nul
 }
 
 export const injectClose = (server: Server): void =>
-  server.conversation.sockets.forEach(s => s.onclose(new CloseEvent('close')));
+  server.conversation.sockets.forEach(s => s.onclose?.(new CloseEvent('close')));
 
 export const injectNewToken = (server: Server): void => {
   const { conversation } = server;
@@ -88,6 +88,10 @@ export const mockAjax = (server: Server, customAjax?: ajaxType): AjaxCreationMet
 
   const jax = customAjax || ((urlOrRequest: string | AjaxRequest): AjaxResponse => {
     if (typeof urlOrRequest === 'string') {
+      throw new Error();
+    }
+
+    if (!urlOrRequest.url) {
       throw new Error();
     }
 
@@ -156,7 +160,7 @@ export const mockAjax = (server: Server, customAjax?: ajaxType): AjaxCreationMet
       }
 
       const watermark = searchParams.get('watermark');
-      const start = Number.parseInt(watermark, 10);
+      const start = watermark ? Number.parseInt(watermark, 10) : 0;
 
       const conversation: DirectLineExport.Conversation = {
         conversationId: server.conversation.conversationId,
@@ -210,14 +214,14 @@ type EventHandler<E extends Event> = (this: WebSocket, ev: E) => any;
 
 export const mockWebSocket = (server: Server): WebSocketConstructor =>
   class MockWebSocket implements WebSocket, ActivitySocket {
-    constructor(url: string, protocols?: string | string[]) {
+    constructor(url: string | URL, protocols?: string | string[]) {
 
       server.scheduler.schedule(() => {
         this.readyState = WebSocket.CONNECTING;
         server.conversation.sockets.add(this);
-        this.onopen(new Event('open'));
+        this.onopen?.call(this, new Event('open'));
         this.readyState = WebSocket.OPEN;
-        const uri = new URL(url);
+        const uri = new URL(typeof url === 'string' ? url : url.toString());
         const watermark = uri.searchParams.get(keyWatermark)
         if (watermark !== null) {
           const start = Number.parseInt(watermark, 10);
@@ -238,28 +242,28 @@ export const mockWebSocket = (server: Server): WebSocketConstructor =>
 
       const message = new MessageEvent('type', { data: JSON.stringify(activityGroup) });
 
-      this.onmessage(message);
+      this.onmessage?.call(this, message);
     }
 
     binaryType: BinaryType = 'arraybuffer';
     readonly bufferedAmount = 0;
     readonly extensions = '';
     readonly protocol = 'https';
-    readyState: number = WebSocket.CLOSED;
+    readyState: WebSocket['readyState'] = WebSocket.CLOSED;
     readonly url = '';
     readonly CLOSED = WebSocket.CLOSED;
     readonly CLOSING = WebSocket.CLOSING;
     readonly CONNECTING = WebSocket.CONNECTING;
     readonly OPEN = WebSocket.OPEN;
 
-    onclose: EventHandler<CloseEvent>;
-    onerror: EventHandler<Event>;
-    onmessage: EventHandler<MessageEvent>;
-    onopen: EventHandler<Event>;
+    onclose: EventHandler<CloseEvent> | null = null;
+    onerror: EventHandler<Event> | null = null;
+    onmessage: EventHandler<MessageEvent> | null = null;
+    onopen: EventHandler<Event> | null = null;
 
     close(code?: number, reason?: string): void {
       this.readyState = WebSocket.CLOSING;
-      this.onclose(new CloseEvent('close'))
+      this.onclose?.call(this, new CloseEvent('close'));
       server.conversation.sockets.delete(this);
       this.readyState = WebSocket.CLOSED;
     }

@@ -1,6 +1,6 @@
 /// <reference path="get-port.d.ts" />
 
-import { createServer } from 'restify';
+import http from 'node:http';
 import createDeferred from 'p-defer';
 import getPort from 'get-port';
 
@@ -32,59 +32,54 @@ export type CreateServerResult = {
 
 export default async function (options: CreateServerOptions): Promise<CreateServerResult> {
   const port = await getPort({ port: 5000 });
-  const server = createServer();
-
-  const orderedPlaybacks: PlaybackWithDeferred[][] = (options.playbacks || []).map(unorderedPlaybacks => {
-    if (Array.isArray(unorderedPlaybacks)) {
-      return unorderedPlaybacks.map(playback => ({
-        ...playback,
-        deferred: createDeferred()
-      }));
-    } else {
-      return [
-        {
-          ...unorderedPlaybacks,
-          deferred: createDeferred()
-        }
-      ];
-    }
-  });
-
-  server.pre((req, res, next) => {
+  const server = http.createServer((req, res) => {
     const firstPlayback = orderedPlaybacks[0];
 
     if (!firstPlayback) {
-      return next();
+      res.statusCode = 404;
+      return res.end();
     }
 
     const unorderedPlaybacks = Array.isArray(firstPlayback) ? firstPlayback : [firstPlayback];
-    let handled;
+    let handled = false;
 
     unorderedPlaybacks.forEach(({ deferred, req: preq = {}, res: pres = {} }, index) => {
       if (req.url === (preq.url || '/')) {
-        if (req.method === 'OPTIONS') {
-          res.send(200, '', {
-            'Access-Control-Allow-Origin': req.header('Origin') || '*',
-            'Access-Control-Allow-Methods': req.header('Access-Control-Request-Method') || 'GET',
-            'Access-Control-Allow-Headers': req.header('Access-Control-Request-Headers') || '',
-            'Content-Type': 'text/html; charset=utf-8'
-          });
+        const origin = req.headers.origin || '*';
 
+        if (req.method === 'OPTIONS') {
+          res.statusCode = 200;
+          res.setHeader('Access-Control-Allow-Origin', origin);
+          res.setHeader(
+            'Access-Control-Allow-Methods',
+            req.headers['access-control-request-method'] || 'GET'
+          );
+          res.setHeader(
+            'Access-Control-Allow-Headers',
+            req.headers['access-control-request-headers'] || ''
+          );
+          res.setHeader('Content-Type', 'text/html; charset=utf-8');
+          res.end('');
           handled = true;
         } else if (req.method === (preq.method || 'GET')) {
-          const headers: any = {};
+          res.statusCode = pres.code || 200;
+          res.setHeader('Access-Control-Allow-Origin', origin);
 
           if (typeof pres.body === 'string') {
-            headers['Content-Type'] = 'text/plain';
+            res.setHeader('Content-Type', 'text/plain');
           }
 
-          res.send(pres.code || 200, pres.body, {
-            // JSDOM requires all HTTP response, including those already pre-flighted, to have "Access-Control-Allow-Origin".
-            // https://github.com/jsdom/jsdom/issues/2024
-            'Access-Control-Allow-Origin': req.header('Origin') || '*',
-            ...headers,
-            ...pres.headers
-          });
+          if (pres.headers) {
+            Object.entries(pres.headers).forEach(([key, value]) => res.setHeader(key, value as string));
+          }
+
+          if (typeof pres.body === 'undefined') {
+            res.end();
+          } else if (typeof pres.body === 'string' || Buffer.isBuffer(pres.body)) {
+            res.end(pres.body);
+          } else {
+            res.end(JSON.stringify(pres.body));
+          }
 
           handled = true;
           deferred.resolve();
@@ -100,7 +95,24 @@ export default async function (options: CreateServerOptions): Promise<CreateServ
     });
 
     if (!handled) {
-      return next();
+      res.statusCode = 404;
+      res.end();
+    }
+  });
+
+  const orderedPlaybacks: PlaybackWithDeferred[][] = (options.playbacks || []).map(unorderedPlaybacks => {
+    if (Array.isArray(unorderedPlaybacks)) {
+      return unorderedPlaybacks.map(playback => ({
+        ...playback,
+        deferred: createDeferred()
+      }));
+    } else {
+      return [
+        {
+          ...unorderedPlaybacks,
+          deferred: createDeferred()
+        }
+      ];
     }
   });
 

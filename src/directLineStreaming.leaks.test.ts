@@ -9,6 +9,7 @@
  * 5. waitUntilOnline() unsubscribes from connectionStatus$ on resolve/reject
  */
 
+import nock from 'nock';
 import { ConnectionStatus } from './directLine';
 
 // We need to capture the WebSocketClient instances to control them in tests.
@@ -72,33 +73,38 @@ jest.mock('./streaming/WebSocketClientWithNetworkInformation', () => ({
   }
 }));
 
-// Mock cross-fetch to prevent real network calls.
-// jest.mock is hoisted, so we use jest.fn() inline and retrieve it later.
-jest.mock('cross-fetch', () => ({
-  __esModule: true,
-  default: jest.fn()
-}));
-
 // Import after mocks.
 import { DirectLineStreaming } from './directLineStreaming';
-import _mockFetchImport from 'cross-fetch';
 
-const mockFetch = _mockFetchImport as unknown as jest.Mock;
+const refreshEndpoint = 'https://test.bot';
+const refreshPath = '/tokens/refresh';
+let refreshRequestCount = 0;
+
+function mockRefreshToken(status = 200, body: Record<string, unknown> = { token: 'new-token' }) {
+  return nock(refreshEndpoint)
+    .post(refreshPath)
+    .reply(() => {
+      refreshRequestCount += 1;
+      return [status, body];
+    })
+    .persist();
+}
 
 beforeEach(() => {
   jest.useFakeTimers({ now: 0 });
   mockWebSocketClientInstances = [];
-  mockFetch.mockReset();
+  refreshRequestCount = 0;
+  nock.cleanAll();
+  nock.disableNetConnect();
 
   // Default: token refresh returns 200.
-  mockFetch.mockResolvedValue({
-    ok: true,
-    json: async () => ({ token: 'new-token' })
-  });
+  mockRefreshToken();
 });
 
 afterEach(() => {
   jest.useRealTimers();
+  nock.enableNetConnect();
+  nock.cleanAll();
 });
 
 /**
@@ -148,13 +154,13 @@ describe('sleep() abort on end()', () => {
     await jest.advanceTimersByTimeAsync(0);
 
     // The refresh loop should have exited. No further fetch calls should be made.
-    const fetchCallCountAfterEnd = mockFetch.mock.calls.length;
+    const fetchCallCountAfterEnd = refreshRequestCount;
 
     // Advance time way past when the next refresh would have happened.
     await jest.advanceTimersByTimeAsync(60 * 60 * 1000);
 
     // No new fetch calls should have been made.
-    expect(mockFetch.mock.calls.length).toBe(fetchCallCountAfterEnd);
+    expect(refreshRequestCount).toBe(fetchCallCountAfterEnd);
   });
 });
 
@@ -166,10 +172,7 @@ describe('refreshToken() abort checks', () => {
     const { directLine, client } = await createAndConnect();
 
     // No refresh fetch yet (haven't advanced 15 minutes).
-    const fetchCalls = mockFetch.mock.calls.filter(
-      ([url]: [string]) => typeof url === 'string' && url.includes('/tokens/refresh')
-    );
-    expect(fetchCalls).toHaveLength(0);
+    expect(refreshRequestCount).toBe(0);
 
     // Call end().
     directLine.end();
@@ -179,10 +182,7 @@ describe('refreshToken() abort checks', () => {
     await jest.advanceTimersByTimeAsync(30 * 60 * 1000);
 
     // There should be no refresh calls.
-    const refreshCallsAfterEnd = mockFetch.mock.calls.filter(
-      ([url]: [string]) => typeof url === 'string' && url.includes('/tokens/refresh')
-    );
-    expect(refreshCallsAfterEnd).toHaveLength(0);
+    expect(refreshRequestCount).toBe(0);
   });
 
   test('refreshToken should stop after abort even between sleep and fetch', async () => {
@@ -200,10 +200,7 @@ describe('refreshToken() abort checks', () => {
     await jest.advanceTimersByTimeAsync(30 * 60 * 1000);
 
     // No token refresh should have been attempted.
-    const refreshCalls = mockFetch.mock.calls.filter(
-      ([url]: [string]) => typeof url === 'string' && url.includes('/tokens/refresh')
-    );
-    expect(refreshCalls).toHaveLength(0);
+    expect(refreshRequestCount).toBe(0);
   });
 });
 
@@ -215,30 +212,23 @@ describe('refreshToken() on fatal 403', () => {
     const { directLine, client } = await createAndConnect();
 
     // Make the refresh endpoint return 403.
-    mockFetch.mockResolvedValue({
-      ok: false,
-      status: 403,
-      statusText: 'Forbidden',
-      json: async () => ({})
-    });
+    nock.cleanAll();
+    mockRefreshToken(403, {});
 
     // Advance through the first refresh interval.
     await jest.advanceTimersByTimeAsync(15 * 60 * 1000);
     await jest.advanceTimersByTimeAsync(0);
 
     // The first refresh attempt should have been made and returned 403.
-    const refreshCalls = mockFetch.mock.calls.filter(
-      ([url]: [string]) => typeof url === 'string' && url.includes('/tokens/refresh')
-    );
-    expect(refreshCalls.length).toBeGreaterThanOrEqual(1);
+    expect(refreshRequestCount).toBeGreaterThanOrEqual(1);
 
-    const callCountAfter403 = mockFetch.mock.calls.length;
+    const callCountAfter403 = refreshRequestCount;
 
     // Advance far past further refresh intervals.
     await jest.advanceTimersByTimeAsync(60 * 60 * 1000);
 
     // No more refresh calls should be made (the loop returned after 403).
-    expect(mockFetch.mock.calls.length).toBe(callCountAfter403);
+    expect(refreshRequestCount).toBe(callCountAfter403);
   });
 });
 
@@ -380,13 +370,13 @@ describe('end() cleanup integration', () => {
     directLine.end();
     await jest.advanceTimersByTimeAsync(0);
 
-    const fetchCountAfterEnd = mockFetch.mock.calls.length;
+    const fetchCountAfterEnd = refreshRequestCount;
     const clientCountAfterEnd = mockWebSocketClientInstances.length;
 
     // Advance time by 2 hours - nothing should happen.
     await jest.advanceTimersByTimeAsync(2 * 60 * 60 * 1000);
 
-    expect(mockFetch.mock.calls.length).toBe(fetchCountAfterEnd);
+    expect(refreshRequestCount).toBe(fetchCountAfterEnd);
     expect(mockWebSocketClientInstances.length).toBe(clientCountAfterEnd);
   });
 });

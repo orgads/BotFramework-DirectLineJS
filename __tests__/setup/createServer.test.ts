@@ -1,7 +1,5 @@
-import fetch from 'node-fetch';
-
 import createServer from './createServer';
-import hasResolved from 'has-resolved';
+import { hasResolved } from 'has-resolved';
 
 test('GET /once.txt should return 200 OK', async () => {
   const { dispose, port, promises } = await createServer({
@@ -150,6 +148,11 @@ test('GET unordered requests', async () => {
   });
 
   try {
+    const firstPromises = promises[0];
+    if (!Array.isArray(firstPromises)) {
+      throw new Error('Expected unordered playbacks for first promise group');
+    }
+
     // 404: We must get either 1a or 1b first
     const res1 = await fetch(`http://localhost:${ port }/2.txt`, undefined);
 
@@ -160,8 +163,8 @@ test('GET unordered requests', async () => {
     const res2 = await fetch(`http://localhost:${ port }/1b.txt`, undefined);
 
     expect(res2).toHaveProperty('ok', true);
-    expect(await hasResolved(promises[0][0])).toBeFalsy();
-    expect(await hasResolved(promises[0][1])).toBeTruthy();
+    expect(await hasResolved(firstPromises[0])).toBeFalsy();
+    expect(await hasResolved(firstPromises[1])).toBeTruthy();
 
     // 404: We must get 1a first
     const res3 = await fetch(`http://localhost:${ port }/2.txt`, undefined);
@@ -172,8 +175,8 @@ test('GET unordered requests', async () => {
     const res4 = await fetch(`http://localhost:${ port }/1a.txt`, undefined);
 
     expect(res4).toHaveProperty('ok', true);
-    expect(await hasResolved(promises[0][0])).toBeTruthy();
-    expect(await hasResolved(promises[0][1])).toBeTruthy();
+    expect(await hasResolved(firstPromises[0])).toBeTruthy();
+    expect(await hasResolved(firstPromises[1])).toBeTruthy();
 
     // 200: We got 2
     const res5 = await fetch(`http://localhost:${ port }/2.txt`, undefined);

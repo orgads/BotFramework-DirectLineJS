@@ -1,23 +1,24 @@
-import fetch from 'node-fetch';
-
 import { ConnectionStatus } from '../../src/directLine';
 import { DirectLineStreaming } from '../../src/directLineStreaming';
 import mockObserver from './__setup__/mockObserver';
 import setupBotProxy from './__setup__/setupBotProxy';
 import waitFor from './__setup__/external/testing-library/waitFor';
-
-const TOKEN_URL = 'https://hawo-mockbot4-token-app.ambitiousflower-67725bfd.westus.azurecontainerapps.io/api/token/directlinease?bot=echo%20bot';
+import fetchToken from './__setup__/fetchToken';
 
 afterEach(() => jest.useRealTimers());
 
 test('should send activity', async () => {
-  jest.useFakeTimers({ now: 0 });
-
   const onWebSocketSendMessage = jest.fn();
 
   onWebSocketSendMessage.mockImplementation((data, socket, req, next) => next(data, socket, req));
 
-  const { domain, token } = await fetch(TOKEN_URL, { method: 'POST' }).then(res => res.json());
+  const tokenResult = await fetchToken();
+  if (!tokenResult) {
+    console.warn('Skipping: Direct Line token service unavailable.');
+    return;
+  }
+
+  const { domain, token } = tokenResult;
 
   const { directLineStreamingURL } = await setupBotProxy({ onWebSocketSendMessage, streamingBotURL: new URL('/', domain).href });
 
