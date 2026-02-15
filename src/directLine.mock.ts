@@ -242,15 +242,15 @@ export const mockWebSocket = (server: Server): WebSocketConstructor =>
     }
 
     binaryType: BinaryType = 'arraybuffer';
-    readonly bufferedAmount: number = 0;
-    readonly extensions: string = '';
-    readonly protocol: string = 'https';
+    readonly bufferedAmount = 0;
+    readonly extensions = '';
+    readonly protocol = 'https';
     readyState: number = WebSocket.CLOSED;
-    readonly url: string = '';
-    readonly CLOSED: number = WebSocket.CLOSED;
-    readonly CLOSING: number = WebSocket.CLOSING;
-    readonly CONNECTING: number = WebSocket.CONNECTING;
-    readonly OPEN: number = WebSocket.OPEN;
+    readonly url = '';
+    readonly CLOSED = WebSocket.CLOSED;
+    readonly CLOSING = WebSocket.CLOSING;
+    readonly CONNECTING = WebSocket.CONNECTING;
+    readonly OPEN = WebSocket.OPEN;
 
     onclose: EventHandler<CloseEvent>;
     onerror: EventHandler<Event>;
