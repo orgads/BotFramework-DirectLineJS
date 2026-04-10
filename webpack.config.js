@@ -29,5 +29,5 @@ module.exports = {
     library: 'DirectLine',
     libraryTarget: 'umd'
   },
-  target: ['web', 'es2019']
+  target: ['web', 'es2023']
 };
